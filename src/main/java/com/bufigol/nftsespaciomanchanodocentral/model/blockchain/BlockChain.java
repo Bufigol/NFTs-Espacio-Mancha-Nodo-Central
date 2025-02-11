@@ -1,44 +1,50 @@
 package com.bufigol.nftsespaciomanchanodocentral.model.blockchain;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.*;
 import java.time.LocalDateTime;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class BlockChain {
     // Estructura principal
     private final List<Block> chain;
-    private final List<Transaction> pendingTransactions;
+    private final ConcurrentLinkedQueue<Transaction> pendingTransactions;
 
     // Configuración
-    private int difficulty;
+    private volatile int difficulty;
     private final double minerReward;
     private final int maxTransactionsPerBlock;
 
     // Control de estado
     private final ReentrantLock chainLock;
-    private boolean isProcessingBlock;
-    private LocalDateTime lastBlockTime;
-    private int targetBlockTimeSeconds;
+    private final AtomicBoolean isProcessingBlock;
+    private volatile LocalDateTime lastBlockTime;
+    private final int targetBlockTimeSeconds;
 
     // Métricas y estadísticas
-    private long totalTransactions;
-    private double totalFeesCollected;
-    private Map<String, Integer> minerStats;
+    private final AtomicLong totalTransactions;
+    private final DoubleAdder totalFeesCollected;
+    private final ConcurrentHashMap<String, Integer> minerStats;
 
     // Constructor
     public BlockChain(int initialDifficulty) {
         this.chain = new CopyOnWriteArrayList<>();
-        this.pendingTransactions = new ArrayList<>();
+        this.pendingTransactions = new ConcurrentLinkedQueue<>();
         this.difficulty = initialDifficulty;
-        this.minerReward = 100.0; // Recompensa inicial
+        this.minerReward = 100.0;
         this.maxTransactionsPerBlock = 1000;
         this.chainLock = new ReentrantLock();
-        this.isProcessingBlock = false;
+        this.isProcessingBlock = new AtomicBoolean(false);
         this.targetBlockTimeSeconds = 60;
-        this.minerStats = new HashMap<>();
+        this.totalTransactions = new AtomicLong(0);
+        this.totalFeesCollected = new DoubleAdder();
+        this.minerStats = new ConcurrentHashMap<>();
 
-        // Crear bloque génesis
         createGenesisBlock();
     }
 
@@ -51,28 +57,21 @@ public class BlockChain {
 
     // Métodos principales de la blockchain
     public void addTransaction(Transaction transaction) {
-        // Validar transacción
         if (!isValidTransaction(transaction)) {
             throw new IllegalArgumentException("Transacción inválida");
         }
-
-        synchronized(pendingTransactions) {
-            pendingTransactions.add(transaction);
-        }
+        pendingTransactions.offer(transaction);
     }
 
     public Block minePendingTransactions(String minerAddress) {
-        chainLock.lock();
-        try {
-            if (isProcessingBlock) {
-                throw new IllegalStateException("Ya se está procesando un bloque");
-            }
-            isProcessingBlock = true;
+        if (!isProcessingBlock.compareAndSet(false, true)) {
+            throw new IllegalStateException("Ya se está procesando un bloque");
+        }
 
-            // Seleccionar transacciones pendientes
+        try {
+            chainLock.lock();
             List<Transaction> transactionsToMine = selectTransactionsForBlock();
 
-            // Crear nuevo bloque
             Block newBlock = new Block(
                     chain.size(),
                     getLatestBlock().getHash(),
@@ -82,10 +81,8 @@ public class BlockChain {
                     difficulty
             );
 
-            // Minar el bloque
             newBlock.mineBlock();
 
-            // Validar y añadir el bloque
             if (isValidBlock(newBlock)) {
                 addBlock(newBlock);
                 updateMinerStats(minerAddress);
@@ -96,50 +93,46 @@ public class BlockChain {
                 throw new IllegalStateException("Bloque minado inválido");
             }
         } finally {
-            isProcessingBlock = false;
+            isProcessingBlock.set(false);
             chainLock.unlock();
         }
     }
 
+    @NotNull
     private List<Transaction> selectTransactionsForBlock() {
-        synchronized(pendingTransactions) {
-            // Ordenar por prioridad y fee
-            pendingTransactions.sort((t1, t2) -> {
-                if (t1.getPriority() != t2.getPriority()) {
-                    return Integer.compare(t2.getPriority(), t1.getPriority());
-                }
-                return Double.compare(t2.getFee(), t1.getFee());
-            });
-
-            // Seleccionar transacciones hasta el límite
-            List<Transaction> selected = new ArrayList<>();
-            Iterator<Transaction> iterator = pendingTransactions.iterator();
-            while (iterator.hasNext() && selected.size() < maxTransactionsPerBlock) {
-                Transaction tx = iterator.next();
-                if (isValidTransaction(tx)) {
-                    selected.add(tx);
-                }
+        List<Transaction> selected = new ArrayList<>();
+        PriorityQueue<Transaction> priorityQueue = new PriorityQueue<>((t1, t2) -> {
+            if (t1.getPriority() != t2.getPriority()) {
+                return Integer.compare(t2.getPriority(), t1.getPriority());
             }
-            return selected;
+            return Double.compare(t2.getFee(), t1.getFee());
+        });
+
+        pendingTransactions.forEach(priorityQueue::offer);
+
+        while (!priorityQueue.isEmpty() && selected.size() < maxTransactionsPerBlock) {
+            Transaction tx = priorityQueue.poll();
+            if (isValidTransaction(tx)) {
+                selected.add(tx);
+            }
         }
+
+        return selected;
     }
 
+
     private void removeMinedTransactions(List<Transaction> minedTransactions) {
-        synchronized(pendingTransactions) {
-            pendingTransactions.removeAll(minedTransactions);
-        }
+        pendingTransactions.removeAll(minedTransactions);
     }
 
     private double calculateMinerReward() {
-        // Calcular recompensa base + fees
-        double totalFees = pendingTransactions.stream()
+        return minerReward + pendingTransactions.stream()
                 .mapToDouble(Transaction::getFee)
                 .sum();
-        return minerReward + totalFees;
     }
 
     // Métodos de validación
-    private boolean isValidBlock(Block block) {
+    private boolean isValidBlock(@NotNull Block block) {
         // Validar hash del bloque anterior
         if (!block.getPreviousHash().equals(getLatestBlock().getHash())) {
             return false;
@@ -188,21 +181,28 @@ public class BlockChain {
         LocalDateTime now = LocalDateTime.now();
         long secondsSinceLastBlock = java.time.Duration.between(lastBlockTime, now).getSeconds();
 
+        int currentDifficulty = this.difficulty; // capturar valor actual
+        int newDifficulty;
+
         if (secondsSinceLastBlock < targetBlockTimeSeconds / 2) {
-            difficulty++;
-        } else if (secondsSinceLastBlock > targetBlockTimeSeconds * 2) {
-            difficulty = Math.max(1, difficulty - 1);
+            newDifficulty = currentDifficulty + 1;
+        } else if (secondsSinceLastBlock > targetBlockTimeSeconds * 2L) {
+            newDifficulty = Math.max(1, currentDifficulty - 1);
+        } else {
+            return;
         }
 
+        this.difficulty = newDifficulty;
         lastBlockTime = now;
     }
 
     private void updateMinerStats(String minerAddress) {
         minerStats.merge(minerAddress, 1, Integer::sum);
-        totalTransactions += getLatestBlock().getTransactions().size();
-        totalFeesCollected += getLatestBlock().getTransactions().stream()
+        totalTransactions.addAndGet(getLatestBlock().getTransactions().size());
+        double fees = getLatestBlock().getTransactions().stream()
                 .mapToDouble(Transaction::getFee)
                 .sum();
+        totalFeesCollected.add(fees);
     }
 
     // Métodos de consulta
@@ -229,8 +229,11 @@ public class BlockChain {
 
     // Getters para estadísticas
     public int getDifficulty() { return difficulty; }
-    public long getTotalTransactions() { return totalTransactions; }
-    public double getTotalFeesCollected() { return totalFeesCollected; }
+    public long getTotalTransactions() {
+        return totalTransactions.get();
+    }
+
+    public DoubleAdder getTotalFeesCollected() { return totalFeesCollected; }
     public Map<String, Integer> getMinerStats() {
         return new HashMap<>(minerStats);
     }
@@ -245,5 +248,40 @@ public class BlockChain {
         stats.put("totalFeesCollected", totalFeesCollected);
         stats.put("minerStats", new HashMap<>(minerStats));
         return stats;
+    }
+
+    private void addBlock(@NotNull Block block) {
+        chainLock.lock();
+        try {
+            // Verificar que el bloque conecta con el último de la cadena
+            if (!block.getPreviousHash().equals(getLatestBlock().getHash())) {
+                throw new IllegalStateException("El bloque no conecta con la cadena actual");
+            }
+
+            // Añadir el bloque a la cadena
+            chain.add(block);
+
+            // Actualizar el estado de las transacciones
+            for (Transaction tx : block.getTransactions()) {
+                tx.confirm(block.getHash());
+            }
+
+            // Propagar confirmaciones a bloques anteriores
+            for (Block previousBlock : chain) {
+                previousBlock.incrementConfirmations();
+            }
+
+            // Actualizar timestamp del último bloque
+            lastBlockTime = LocalDateTime.now();
+
+            // Actualizar métricas
+            totalTransactions.addAndGet(block.getTransactions().size());
+            totalFeesCollected.add(block.getTransactions().stream()
+                    .mapToDouble(Transaction::getFee)
+                    .sum());
+
+        } finally {
+            chainLock.unlock();
+        }
     }
 }

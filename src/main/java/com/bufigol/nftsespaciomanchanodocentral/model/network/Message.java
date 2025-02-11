@@ -1,5 +1,5 @@
 package com.bufigol.nftsespaciomanchanodocentral.model.network;
-import com.bufigol.nftsespaciomanchanodocentral.model.utils.MessagePriority;
+import com.bufigol.nftsespaciomanchanodocentral.model.enumeraciones.MessagePriority;
 
 import java.util.UUID;
 import java.util.Map;

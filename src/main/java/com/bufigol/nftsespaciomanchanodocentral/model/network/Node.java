@@ -1,5 +1,5 @@
 package com.bufigol.nftsespaciomanchanodocentral.model.network;
-import com.bufigol.nftsespaciomanchanodocentral.model.utils.NodeCapability;
+import com.bufigol.nftsespaciomanchanodocentral.model.enumeraciones.NodeCapability;
 
 import java.util.*;
 import java.time.LocalDateTime;

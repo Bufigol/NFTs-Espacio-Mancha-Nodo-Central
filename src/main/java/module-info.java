@@ -10,6 +10,7 @@ module com.bufigol.nftsespaciomanchanodocentral {
     requires org.kordamp.bootstrapfx.core;
     requires eu.hansolo.tilesfx;
     requires com.almasb.fxgl.all;
+    requires annotations;
 
     opens com.bufigol.nftsespaciomanchanodocentral to javafx.fxml;
     exports com.bufigol.nftsespaciomanchanodocentral;

@@ -1,8 +1,8 @@
 package com.bufigol.nftsespaciomanchanodocentral.model.blockchain;
 
 import com.bufigol.nftsespaciomanchanodocentral.model.entities.NFT;
-import com.bufigol.nftsespaciomanchanodocentral.model.utils.TransactionStatus;
-import com.bufigol.nftsespaciomanchanodocentral.model.utils.TransactionType;
+import com.bufigol.nftsespaciomanchanodocentral.model.enumeraciones.TransactionStatus;
+import com.bufigol.nftsespaciomanchanodocentral.model.enumeraciones.TransactionType;
 
 import java.util.UUID;
 import java.time.LocalDateTime;

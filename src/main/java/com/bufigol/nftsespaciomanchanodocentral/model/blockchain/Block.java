@@ -109,7 +109,7 @@ public class Block {
             return "0000000000000000000000000000000000000000000000000000000000000000";
         }
         if (hashes.size() == 1) {
-            return hashes.get(0);
+            return hashes.getFirst();
         }
 
         List<String> newHashes = new ArrayList<>();

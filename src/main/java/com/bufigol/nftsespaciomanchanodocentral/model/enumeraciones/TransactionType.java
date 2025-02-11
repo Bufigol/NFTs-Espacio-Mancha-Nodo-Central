@@ -1,4 +1,4 @@
-package com.bufigol.nftsespaciomanchanodocentral.model.utils;
+package com.bufigol.nftsespaciomanchanodocentral.model.enumeraciones;
 
 public enum TransactionType {
     NFT_TRANSFER("Transferencia de NFT"),
